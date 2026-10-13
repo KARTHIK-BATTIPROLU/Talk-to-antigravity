@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Production build output
+dist/
+
+# Logs and temp files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test outputs
+scripts/whisper_test_err.txt
+scripts/whisper_test_out.txt
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
