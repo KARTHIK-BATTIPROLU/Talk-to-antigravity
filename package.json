@@ -1,0 +1,144 @@
+{
+  "name": "talking-to-antigravity",
+  "displayName": "Talking to Antigravity (Voice Dev Bridge)",
+  "description": "Two-way real-time conversational voice interface for Antigravity, Cursor, Claude Code, and VS Code with Gemini 2.0 Live",
+  "version": "1.0.0",
+  "publisher": "antigravity",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/developer/talking-to-antigravity"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "voice",
+    "gemini",
+    "antigravity",
+    "cursor",
+    "claude",
+    "multimodal live"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "talking-to-antigravity-view-container",
+          "title": "Voice Dev Bridge",
+          "icon": "$(mic)"
+        }
+      ]
+    },
+    "views": {
+      "talking-to-antigravity-view-container": [
+        {
+          "type": "webview",
+          "id": "talking-to-antigravity.sidebarView",
+          "name": "Antigravity Voice Bridge"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "talking-to-antigravity.startVoice",
+        "title": "Voice Bridge: Start Voice Session",
+        "icon": "$(play)"
+      },
+      {
+        "command": "talking-to-antigravity.stopVoice",
+        "title": "Voice Bridge: Stop Voice Session",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "talking-to-antigravity.toggleVoice",
+        "title": "Voice Bridge: Toggle Voice Session",
+        "icon": "$(mic)"
+      },
+      {
+        "command": "talking-to-antigravity.toggleMute",
+        "title": "Voice Bridge: Toggle Mic Mute",
+        "icon": "$(mute)"
+      },
+      {
+        "command": "talking-to-antigravity.interrupt",
+        "title": "Voice Bridge: Interrupt Assistant (Barge-in)",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "talking-to-antigravity.openSettings",
+        "title": "Voice Bridge: Open Settings"
+      }
+    ],
+    "configuration": {
+      "title": "Talking to Antigravity Voice Bridge",
+      "properties": {
+        "talkingToAntigravity.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Google Gemini API Key for Gemini Live Multimodal WebSocket"
+        },
+        "talkingToAntigravity.model": {
+          "type": "string",
+          "default": "models/gemini-2.5-flash-native-audio-latest",
+          "description": "Gemini Live model name supporting bidiGenerateContent"
+        },
+        "talkingToAntigravity.voiceName": {
+          "type": "string",
+          "default": "Puck",
+          "enum": ["Puck", "Charon", "Kore", "Fenrir", "Aoede"],
+          "description": "Gemini Live Prebuilt Voice"
+        },
+        "talkingToAntigravity.pythonPath": {
+          "type": "string",
+          "default": "C:\\Python311\\python.exe",
+          "description": "Path to Python executable for background audio capture"
+        },
+        "talkingToAntigravity.audioCaptureMethod": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "python", "webview"],
+          "description": "Audio capture method (auto attempts Python sounddevice first, falls back to webview)"
+        },
+        "talkingToAntigravity.autoExecuteTools": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically execute read and query tools. Commands are logged in transcript."
+        },
+        "talkingToAntigravity.claudeCliPath": {
+          "type": "string",
+          "default": "C:\\Users\\Karthik\\AppData\\Roaming\\npm\\claude.cmd",
+          "description": "Path to Claude Code CLI"
+        },
+        "talkingToAntigravity.antigravityCliPath": {
+          "type": "string",
+          "default": "C:\\Users\\Karthik\\AppData\\Roaming\\Antigravity\\bin\\agy-node.cmd",
+          "description": "Path to Antigravity CLI"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node --test dist/tests/**/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
