@@ -76,6 +76,26 @@
       {
         "command": "talking-to-antigravity.openSettings",
         "title": "Voice Bridge: Open Settings"
+      },
+      {
+        "command": "talking-to-antigravity.showGoal",
+        "title": "Voice Companion: Show Goal & Tasks (/goal)"
+      },
+      {
+        "command": "talking-to-antigravity.showPlan",
+        "title": "Voice Companion: Show Implementation Plan (/plan)"
+      },
+      {
+        "command": "talking-to-antigravity.teamworkPreview",
+        "title": "Voice Companion: Teamwork & Git Diffs (/teamwork-preview)"
+      },
+      {
+        "command": "talking-to-antigravity.openBrowserPreview",
+        "title": "Voice Companion: Dev Server Discovery (/browser)"
+      },
+      {
+        "command": "talking-to-antigravity.toggleBoost",
+        "title": "Voice Companion: Boost Deep Reasoning (/boost)"
       }
     ],
     "configuration": {
@@ -120,7 +140,7 @@
         },
         "talkingToAntigravity.antigravityCliPath": {
           "type": "string",
-          "default": "C:\\Users\\Karthik\\AppData\\Roaming\\Antigravity\\bin\\agy-node.cmd",
+          "default": "C:\\Users\\Karthik\\.gemini\\antigravity\\bin\\agentapi.bat",
           "description": "Path to Antigravity CLI"
         }
       }

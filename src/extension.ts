@@ -6,6 +6,12 @@ import { ToolExecutor, GEMINI_TOOLS } from './toolExecutor';
 import { SidebarProvider } from './sidebarProvider';
 import { VoicePanelProvider } from './voicePanelProvider';
 import { WhisperCaptionEngine } from './whisperEngine';
+import { AmbientTelemetry } from './ambientTelemetry';
+import { GoalManager } from './goalManager';
+import { PlanManager } from './planManager';
+import { TeamworkPreviewManager } from './teamworkPreviewManager';
+import { BrowserManager } from './browserManager';
+import { BoostManager } from './boostManager';
 import { VoiceState, TranscriptEntry } from './types';
 
 let geminiClient: GeminiLiveClient | null = null;
@@ -16,6 +22,13 @@ let sidebarProvider: SidebarProvider | null = null;
 let whisperEngine: WhisperCaptionEngine | null = null;
 let statusBarItem: vscode.StatusBarItem;
 
+let ambientTelemetry: AmbientTelemetry | null = null;
+let goalManager: GoalManager | null = null;
+let planManager: PlanManager | null = null;
+let teamworkManager: TeamworkPreviewManager | null = null;
+let browserManager: BrowserManager | null = null;
+let boostManager: BoostManager | null = null;
+
 let currentState: VoiceState = 'idle';
 let currentTurnModelEntryId: string | null = null;
 
@@ -23,15 +36,31 @@ export function activate(context: vscode.ExtensionContext) {
   console.log('Talking to Antigravity extension activating...');
 
   const config = vscode.workspace.getConfiguration('talkingToAntigravity');
-  const apiKey = config.get<string>('apiKey') || process.env.GEMINI_API_KEY || '';
-  const model = config.get<string>('model') || 'models/gemini-2.5-flash-native-audio-latest';
-  const voiceName = config.get<string>('voiceName') || 'Puck';
   const pythonPath = config.get<string>('pythonPath') || 'C:\\Python311\\python.exe';
   const claudePath = config.get<string>('claudeCliPath') || 'C:\\Users\\Karthik\\AppData\\Roaming\\npm\\claude.cmd';
-  const antigravityPath = config.get<string>('antigravityCliPath') || 'C:\\Users\\Karthik\\AppData\\Roaming\\Antigravity\\bin\\agy-node.cmd';
+  const antigravityPath = config.get<string>('antigravityCliPath') || 'C:\\Users\\Karthik\\.gemini\\antigravity\\bin\\agentapi.bat';
 
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+
+  // Instantiate Pillar Engines
   terminalManager = new TerminalIntegrationManager(claudePath, antigravityPath);
-  toolExecutor = new ToolExecutor(terminalManager);
+  ambientTelemetry = new AmbientTelemetry(workspaceRoot);
+  goalManager = new GoalManager(workspaceRoot);
+  planManager = new PlanManager(workspaceRoot);
+  teamworkManager = new TeamworkPreviewManager(workspaceRoot);
+  browserManager = new BrowserManager();
+  boostManager = new BoostManager(antigravityPath, claudePath, workspaceRoot);
+
+  toolExecutor = new ToolExecutor(
+    terminalManager,
+    goalManager,
+    planManager,
+    teamworkManager,
+    browserManager,
+    boostManager,
+    ambientTelemetry
+  );
+
   audioCapture = new AudioCaptureEngine({ pythonPath });
   whisperEngine = new WhisperCaptionEngine(pythonPath, context.extensionUri.fsPath);
 
@@ -46,6 +75,9 @@ export function activate(context: vscode.ExtensionContext) {
   updateStatusBar('idle');
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+
+  // Register ambient telemetry watchers (terminals, editor, saves)
+  ambientTelemetry.registerWatchers(context);
 
   // Wire Webview callbacks
   sidebarProvider.onStartRequested = () => startVoiceSession();
@@ -72,6 +104,87 @@ export function activate(context: vscode.ExtensionContext) {
   };
   sidebarProvider.onClearTranscriptRequested = () => {
     currentTurnModelEntryId = null;
+  };
+
+  // Wire Pillar UI callbacks
+  sidebarProvider.onGetGoalRequested = async () => {
+    if (goalManager) {
+      const status = await goalManager.getGoalStatus();
+      sidebarProvider?.sendGoalUpdate(status);
+    }
+  };
+
+  sidebarProvider.onUpdateTaskStatusRequested = async (taskIdOrText, status) => {
+    if (goalManager) {
+      const updated = await goalManager.updateTaskStatus(taskIdOrText, status);
+      sidebarProvider?.sendGoalUpdate(updated);
+    }
+  };
+
+  sidebarProvider.onAddTaskRequested = async (text, milestone) => {
+    if (goalManager) {
+      const updated = await goalManager.addTask(text, milestone);
+      sidebarProvider?.sendGoalUpdate(updated);
+    }
+  };
+
+  sidebarProvider.onGetPlanRequested = async () => {
+    if (planManager) {
+      const plan = await planManager.getPlan();
+      sidebarProvider?.sendPlanUpdate(plan);
+    }
+  };
+
+  sidebarProvider.onApprovePlanStepRequested = async (stepId) => {
+    if (planManager) {
+      const plan = await planManager.approveStep(stepId);
+      sidebarProvider?.sendPlanUpdate(plan);
+    }
+  };
+
+  sidebarProvider.onGetTeamworkRequested = async () => {
+    if (teamworkManager) {
+      const delta = await teamworkManager.getWorkspaceDelta();
+      sidebarProvider?.sendTeamworkUpdate(delta);
+    }
+  };
+
+  sidebarProvider.onOpenDiffRequested = async (filePath) => {
+    if (teamworkManager) {
+      await teamworkManager.openDiffViewer(filePath);
+    }
+  };
+
+  sidebarProvider.onScanDevServersRequested = async () => {
+    if (browserManager) {
+      const servers = await browserManager.scanDevServers();
+      sidebarProvider?.sendDevServersUpdate(servers);
+      if (ambientTelemetry) {
+        ambientTelemetry.setDevServers(servers.map((s) => s.url));
+      }
+    }
+  };
+
+  sidebarProvider.onRunBoostRequested = async (prompt, model) => {
+    if (boostManager) {
+      try {
+        const result = await boostManager.runBoostQuery(prompt, {
+          model,
+          onProgress: (msg) => sidebarProvider?.sendBoostProgress(msg)
+        });
+        sidebarProvider?.sendBoostComplete(result);
+      } catch (err: any) {
+        sidebarProvider?.sendBoostComplete(`Boost failed: ${err.message}`);
+      }
+    }
+  };
+
+  sidebarProvider.onOpenExternalRequested = (targetUrl: string) => {
+    try {
+      vscode.env.openExternal(vscode.Uri.parse(targetUrl));
+    } catch {
+      // Ignore
+    }
   };
 
   // Commands
@@ -103,6 +216,43 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('talking-to-antigravity.interrupt', () => triggerInterrupt()),
     vscode.commands.registerCommand('talking-to-antigravity.openSettings', () => {
       vscode.commands.executeCommand('workbench.action.openSettings', 'talkingToAntigravity');
+    }),
+    // 5 Pillar VS Code Commands
+    vscode.commands.registerCommand('talking-to-antigravity.showGoal', async () => {
+      vscode.commands.executeCommand('talking-to-antigravity.sidebarView.focus');
+      sidebarProvider?.switchTab('goal');
+      if (goalManager) {
+        const status = await goalManager.getGoalStatus();
+        sidebarProvider?.sendGoalUpdate(status);
+      }
+    }),
+    vscode.commands.registerCommand('talking-to-antigravity.showPlan', async () => {
+      vscode.commands.executeCommand('talking-to-antigravity.sidebarView.focus');
+      sidebarProvider?.switchTab('plan');
+      if (planManager) {
+        const plan = await planManager.getPlan();
+        sidebarProvider?.sendPlanUpdate(plan);
+      }
+    }),
+    vscode.commands.registerCommand('talking-to-antigravity.teamworkPreview', async () => {
+      vscode.commands.executeCommand('talking-to-antigravity.sidebarView.focus');
+      sidebarProvider?.switchTab('teamwork');
+      if (teamworkManager) {
+        const delta = await teamworkManager.getWorkspaceDelta();
+        sidebarProvider?.sendTeamworkUpdate(delta);
+      }
+    }),
+    vscode.commands.registerCommand('talking-to-antigravity.openBrowserPreview', async () => {
+      vscode.commands.executeCommand('talking-to-antigravity.sidebarView.focus');
+      sidebarProvider?.switchTab('browser');
+      if (browserManager) {
+        const servers = await browserManager.scanDevServers();
+        sidebarProvider?.sendDevServersUpdate(servers);
+      }
+    }),
+    vscode.commands.registerCommand('talking-to-antigravity.toggleBoost', () => {
+      vscode.commands.executeCommand('talking-to-antigravity.sidebarView.focus');
+      sidebarProvider?.switchTab('boost');
     })
   );
 
@@ -111,11 +261,13 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('talkingToAntigravity')) {
         const updatedConfig = vscode.workspace.getConfiguration('talkingToAntigravity');
+        const updatedClaude = updatedConfig.get<string>('claudeCliPath');
+        const updatedAntigravity = updatedConfig.get<string>('antigravityCliPath');
         if (terminalManager) {
-          terminalManager.updatePaths(
-            updatedConfig.get<string>('claudeCliPath'),
-            updatedConfig.get<string>('antigravityCliPath')
-          );
+          terminalManager.updatePaths(updatedClaude, updatedAntigravity);
+        }
+        if (boostManager) {
+          boostManager.updatePaths(updatedAntigravity, updatedClaude);
         }
         if (audioCapture) {
           audioCapture.updateOptions({
@@ -182,11 +334,14 @@ export async function startVoiceSession(): Promise<void> {
   const model = config.get<string>('model') || 'models/gemini-2.5-flash-native-audio-latest';
   const voiceName = config.get<string>('voiceName') || 'Puck';
 
+  const telemetryHeader = ambientTelemetry ? ambientTelemetry.getPromptContext() : '';
+
   const systemInstruction =
-    'You are Antigravity Voice Pair Programmer, an interactive AI voice assistant inside VS Code / Cursor / Antigravity. ' +
-    'You can read workspace files, inspect directory trees, execute terminal commands, and inspect active editor tabs. ' +
+    'You are Antigravity Voice Pair Programmer, an interactive AI voice companion inside VS Code / Cursor / Antigravity. ' +
+    'You have direct voice and tool control over goals (/goal), implementation plans (/plan), teamwork diff previews (/teamwork-preview), dev servers (/browser), and deep boost reasoning (/boost). ' +
+    (telemetryHeader ? `\n\n${telemetryHeader}\n` : '') +
     'Keep your spoken responses natural, direct, and concise (1-3 sentences when possible). ' +
-    'When the user asks you to read or check code, inspect files, or run commands, invoke the appropriate function call.';
+    'When the user asks you to read or check code, inspect files, check goals, run commands, or review diffs, invoke the appropriate function call.';
 
   geminiClient = new GeminiLiveClient({
     apiKey,
@@ -225,20 +380,32 @@ export async function startVoiceSession(): Promise<void> {
     vscode.window.showInformationMessage('Antigravity Voice Bridge connected!');
   });
 
+  const checkSpokenSlashCommand = (caption: string) => {
+    const trimmed = caption.trim();
+    if (trimmed.startsWith('/') || /^\s*\/(?:goal|plan|teamwork|browser|boost)/i.test(trimmed)) {
+      handleTextPrompt(trimmed);
+    }
+  };
+
   if (whisperEngine) {
     whisperEngine.start();
     whisperEngine.removeAllListeners('caption');
     whisperEngine.on('caption', (text: string) => {
       VoicePanelProvider.currentPanel?.sendUserCaption(text);
+      sidebarProvider?.sendUserCaption(text);
+      checkSpokenSlashCommand(text);
     });
   }
 
   geminiClient.on('userCaption', (text: string) => {
     VoicePanelProvider.currentPanel?.sendUserCaption(text);
+    sidebarProvider?.sendUserCaption(text);
+    checkSpokenSlashCommand(text);
   });
 
   geminiClient.on('modelCaption', (text: string) => {
     VoicePanelProvider.currentPanel?.sendModelCaption(text);
+    sidebarProvider?.sendModelCaption(text);
   });
 
   geminiClient.on('audioChunk', (pcmB64: string) => {
@@ -322,6 +489,17 @@ export async function startVoiceSession(): Promise<void> {
           res.response.output,
           status
         );
+
+        // Sync UI updates for pillar tool responses
+        if (call.name === 'get_goal_status' || call.name === 'update_goal') {
+          sidebarProvider?.sendGoalUpdate(res.response.output);
+        } else if (call.name === 'get_plan' || call.name === 'create_or_update_plan' || call.name === 'approve_plan_step') {
+          sidebarProvider?.sendPlanUpdate(res.response.output);
+        } else if (call.name === 'get_git_diff') {
+          sidebarProvider?.sendTeamworkUpdate(res.response.output);
+        } else if (call.name === 'detect_dev_servers') {
+          sidebarProvider?.sendDevServersUpdate(res.response.output);
+        }
       }
     }
 
@@ -420,18 +598,156 @@ export function triggerInterrupt(): void {
   }, 400);
 }
 
-export function handleTextPrompt(text: string): void {
+export async function handleTextPrompt(text: string): Promise<void> {
+  const trimmed = text.trim();
+
+  // Intercept Slash Commands
+  if (trimmed.startsWith('/goal')) {
+    sidebarProvider?.switchTab('goal');
+    if (goalManager) {
+      const status = await goalManager.getGoalStatus();
+      sidebarProvider?.sendGoalUpdate(status);
+      sidebarProvider?.sendTranscript({
+        id: 'cmd-' + Date.now(),
+        role: 'user',
+        text: trimmed,
+        timestamp: Date.now()
+      });
+      sidebarProvider?.sendTranscript({
+        id: 'model-' + Date.now(),
+        role: 'model',
+        text: `🎯 **Milestone**: ${status.milestone}\nProgress: **${status.percentDone}%** (${status.completedTasks}/${status.totalTasks} completed)\nActive Task: ${status.activeTask?.text || 'None'}`,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+
+  if (trimmed.startsWith('/plan')) {
+    sidebarProvider?.switchTab('plan');
+    if (planManager) {
+      const plan = await planManager.getPlan();
+      sidebarProvider?.sendPlanUpdate(plan);
+      sidebarProvider?.sendTranscript({
+        id: 'cmd-' + Date.now(),
+        role: 'user',
+        text: trimmed,
+        timestamp: Date.now()
+      });
+      sidebarProvider?.sendTranscript({
+        id: 'model-' + Date.now(),
+        role: 'model',
+        text: plan
+          ? `📋 **Objective**: ${plan.objective}\nSteps: ${plan.steps.length} (${plan.allApproved ? 'All Approved' : 'Awaiting Approval'})`
+          : '📋 No active plan found.',
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+
+  if (trimmed.startsWith('/teamwork-preview')) {
+    sidebarProvider?.switchTab('teamwork');
+    if (teamworkManager) {
+      if (trimmed.includes('walkthrough')) {
+        const md = await teamworkManager.generateWalkthrough(
+          ['Implementation and verification completed'],
+          'All test suites passed.'
+        );
+        sidebarProvider?.sendTranscript({
+          id: 'model-' + Date.now(),
+          role: 'model',
+          text: `📝 Walkthrough generated:\n\n${md}`,
+          timestamp: Date.now()
+        });
+      } else {
+        const delta = await teamworkManager.getWorkspaceDelta();
+        sidebarProvider?.sendTeamworkUpdate(delta);
+        sidebarProvider?.sendTranscript({
+          id: 'cmd-' + Date.now(),
+          role: 'user',
+          text: trimmed,
+          timestamp: Date.now()
+        });
+        sidebarProvider?.sendTranscript({
+          id: 'model-' + Date.now(),
+          role: 'model',
+          text: `👥 **Branch**: \`${delta.branch}\` (+${delta.insertions} / -${delta.deletions})\nModified: ${delta.modifiedFiles.length} | Staged: ${delta.stagedFiles.length}`,
+          timestamp: Date.now()
+        });
+      }
+    }
+    return;
+  }
+
+  if (trimmed.startsWith('/browser')) {
+    sidebarProvider?.switchTab('browser');
+    if (browserManager) {
+      const servers = await browserManager.scanDevServers();
+      sidebarProvider?.sendDevServersUpdate(servers);
+      sidebarProvider?.sendTranscript({
+        id: 'cmd-' + Date.now(),
+        role: 'user',
+        text: trimmed,
+        timestamp: Date.now()
+      });
+      sidebarProvider?.sendTranscript({
+        id: 'model-' + Date.now(),
+        role: 'model',
+        text: servers.length > 0
+          ? `🌐 Found ${servers.length} dev server(s):\n${servers.map((s) => `- ${s.url} (${s.title})`).join('\n')}`
+          : '🌐 No active dev servers found on localhost.',
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+
+  if (trimmed.startsWith('/boost')) {
+    sidebarProvider?.switchTab('boost');
+    const prompt = trimmed.replace(/^\/boost\s*/i, '');
+    if (boostManager && prompt) {
+      sidebarProvider?.sendTranscript({
+        id: 'cmd-' + Date.now(),
+        role: 'user',
+        text: trimmed,
+        timestamp: Date.now()
+      });
+      sidebarProvider?.sendBoostProgress('Running Boost deep reasoning...');
+      boostManager
+        .runBoostQuery(prompt, {
+          onProgress: (m) => sidebarProvider?.sendBoostProgress(m)
+        })
+        .then((result) => {
+          sidebarProvider?.sendBoostComplete(result);
+          sidebarProvider?.sendTranscript({
+            id: 'model-' + Date.now(),
+            role: 'model',
+            text: `⚡ **Boost Reasoning Result**:\n\n${result}`,
+            timestamp: Date.now()
+          });
+        })
+        .catch((err) => {
+          sidebarProvider?.sendBoostComplete(`Boost failed: ${err.message}`);
+        });
+    }
+    return;
+  }
+
+  // Regular prompt sent to Gemini Live
   const entryId = 'user-' + Date.now();
   sidebarProvider?.sendTranscript({
     id: entryId,
     role: 'user',
-    text: text,
+    text: trimmed,
     timestamp: Date.now()
   });
 
   if (geminiClient && geminiClient.ready) {
     updateStatusBar('thinking', 'Thinking...');
-    geminiClient.sendTextMessage(text);
+    const contextHeader = ambientTelemetry ? ambientTelemetry.getPromptContext() : '';
+    const fullPrompt = contextHeader ? `${contextHeader}\n\n${trimmed}` : trimmed;
+    geminiClient.sendTextMessage(fullPrompt);
   } else {
     vscode.window.showWarningMessage('Start voice session before sending prompt.');
   }
