@@ -45,6 +45,70 @@ export interface TranscriptEntry {
   };
 }
 
+export interface GoalTask {
+  id: string;
+  text: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'blocked';
+  indent: number;
+  milestone?: string;
+}
+
+export interface GoalStatus {
+  milestone: string;
+  totalTasks: number;
+  completedTasks: number;
+  inProgressTasks: number;
+  blockedTasks: number;
+  percentDone: number;
+  activeTask?: GoalTask;
+  tasks: GoalTask[];
+  sourcePath: string;
+}
+
+export interface PlanStep {
+  id: number;
+  text: string;
+  approved: boolean;
+}
+
+export interface PlanData {
+  objective: string;
+  proposedChanges: Array<{ action: 'CREATE' | 'MODIFY' | 'DELETE'; path: string; rationale: string }>;
+  verificationPlan: string[];
+  steps: PlanStep[];
+  allApproved: boolean;
+  sourcePath: string;
+}
+
+export interface DevServerInfo {
+  port: number;
+  url: string;
+  status: 'running' | 'stopped';
+  title?: string;
+}
+
+export interface WorkspaceDelta {
+  modifiedFiles: string[];
+  stagedFiles: string[];
+  untrackedFiles: string[];
+  insertions: number;
+  deletions: number;
+  branch: string;
+  ahead: number;
+  behind: number;
+}
+
+export interface AmbientSnapshot {
+  activeFile?: string;
+  languageId?: string;
+  cursorLine?: number;
+  diagnosticsCount: { errors: number; warnings: number };
+  gitBranch?: string;
+  gitStatusSummary?: string;
+  detectedDevServers: string[];
+  recentTerminalOutput?: string;
+}
+
 export type WebviewToExtensionMessage =
   | { type: 'startSession' }
   | { type: 'stopSession' }
@@ -53,7 +117,18 @@ export type WebviewToExtensionMessage =
   | { type: 'sendTextMessage'; text: string }
   | { type: 'micPcmChunk'; data: string; rms: number }
   | { type: 'clearTranscript' }
-  | { type: 'executeTerminalCommand'; command: string };
+  | { type: 'executeTerminalCommand'; command: string }
+  | { type: 'getGoal' }
+  | { type: 'updateTaskStatus'; taskIdOrText: string; status: GoalTask['status'] }
+  | { type: 'addTask'; text: string; milestone?: string }
+  | { type: 'getPlan' }
+  | { type: 'approvePlanStep'; stepId: number }
+  | { type: 'getTeamworkPreview' }
+  | { type: 'openDiff'; filePath: string }
+  | { type: 'scanDevServers' }
+  | { type: 'runBoost'; prompt: string; model?: 'pro' | 'flash' }
+  | { type: 'switchTab'; tab: string }
+  | { type: 'openExternal'; url: string };
 
 export type ExtensionToWebviewMessage =
   | { type: 'stateChange'; state: VoiceState; details?: string }
@@ -66,5 +141,13 @@ export type ExtensionToWebviewMessage =
   | { type: 'stopWebviewMic' }
   | { type: 'error'; message: string }
   | { type: 'userCaption'; text: string }
-  | { type: 'modelCaption'; text: string };
+  | { type: 'modelCaption'; text: string }
+  | { type: 'goalUpdate'; data: GoalStatus }
+  | { type: 'planUpdate'; data: PlanData | null }
+  | { type: 'teamworkUpdate'; delta: WorkspaceDelta; walkthrough?: string }
+  | { type: 'devServersUpdate'; servers: DevServerInfo[] }
+  | { type: 'boostProgress'; message: string }
+  | { type: 'boostComplete'; result: string }
+  | { type: 'activeTab'; tab: string };
+
 
