@@ -3,7 +3,12 @@ import {
   VoiceState,
   TranscriptEntry,
   WebviewToExtensionMessage,
-  ExtensionToWebviewMessage
+  ExtensionToWebviewMessage,
+  GoalStatus,
+  GoalTask,
+  PlanData,
+  WorkspaceDelta,
+  DevServerInfo
 } from './types';
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
@@ -19,6 +24,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   public onTerminalCommandRequested?: (command: string) => void;
   public onMicChunkReceived?: (pcmB64: string, rms: number) => void;
   public onClearTranscriptRequested?: () => void;
+
+  // Pillar Callbacks
+  public onGetGoalRequested?: () => void;
+  public onUpdateTaskStatusRequested?: (taskIdOrText: string, status: GoalTask['status']) => void;
+  public onAddTaskRequested?: (text: string, milestone?: string) => void;
+  public onGetPlanRequested?: () => void;
+  public onApprovePlanStepRequested?: (stepId: number) => void;
+  public onGetTeamworkRequested?: () => void;
+  public onOpenDiffRequested?: (filePath: string) => void;
+  public onScanDevServersRequested?: () => void;
+  public onRunBoostRequested?: (prompt: string, model?: 'pro' | 'flash') => void;
+  public onOpenExternalRequested?: (url: string) => void;
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
@@ -66,8 +83,49 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         case 'clearTranscript':
           this.onClearTranscriptRequested?.();
           break;
+        case 'getGoal':
+          this.onGetGoalRequested?.();
+          break;
+        case 'updateTaskStatus':
+          this.onUpdateTaskStatusRequested?.(message.taskIdOrText, message.status);
+          break;
+        case 'addTask':
+          this.onAddTaskRequested?.(message.text, message.milestone);
+          break;
+        case 'getPlan':
+          this.onGetPlanRequested?.();
+          break;
+        case 'approvePlanStep':
+          this.onApprovePlanStepRequested?.(message.stepId);
+          break;
+        case 'getTeamworkPreview':
+          this.onGetTeamworkRequested?.();
+          break;
+        case 'openDiff':
+          this.onOpenDiffRequested?.(message.filePath);
+          break;
+        case 'scanDevServers':
+          this.onScanDevServersRequested?.();
+          break;
+        case 'runBoost':
+          this.onRunBoostRequested?.(message.prompt, message.model);
+          break;
+        case 'openExternal':
+          this.onOpenExternalRequested?.(message.url);
+          break;
+        case 'switchTab':
+          this.switchTab(message.tab);
+          break;
       }
     });
+
+    // Request initial data on mount
+    setTimeout(() => {
+      this.onGetGoalRequested?.();
+      this.onGetPlanRequested?.();
+      this.onGetTeamworkRequested?.();
+      this.onScanDevServersRequested?.();
+    }, 500);
   }
 
   public postMessage(message: ExtensionToWebviewMessage): void {
@@ -92,7 +150,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: 'transcript', entry });
   }
 
-  public updateTranscript(id: string, partialText?: string, toolResult?: any, status?: 'running' | 'success' | 'error'): void {
+  public updateTranscript(
+    id: string,
+    partialText?: string,
+    toolResult?: any,
+    status?: 'running' | 'success' | 'error'
+  ): void {
     this.postMessage({ type: 'transcriptUpdate', id, partialText, toolResult, status });
   }
 
@@ -108,13 +171,49 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: 'stopWebviewMic' });
   }
 
+  public sendGoalUpdate(data: GoalStatus): void {
+    this.postMessage({ type: 'goalUpdate', data });
+  }
+
+  public sendPlanUpdate(data: PlanData | null): void {
+    this.postMessage({ type: 'planUpdate', data });
+  }
+
+  public sendTeamworkUpdate(delta: WorkspaceDelta, walkthrough?: string): void {
+    this.postMessage({ type: 'teamworkUpdate', delta, walkthrough });
+  }
+
+  public sendDevServersUpdate(servers: DevServerInfo[]): void {
+    this.postMessage({ type: 'devServersUpdate', servers });
+  }
+
+  public sendBoostProgress(message: string): void {
+    this.postMessage({ type: 'boostProgress', message });
+  }
+
+  public sendBoostComplete(result: string): void {
+    this.postMessage({ type: 'boostComplete', result });
+  }
+
+  public sendUserCaption(text: string): void {
+    this.postMessage({ type: 'userCaption', text });
+  }
+
+  public sendModelCaption(text: string): void {
+    this.postMessage({ type: 'modelCaption', text });
+  }
+
+  public switchTab(tab: string): void {
+    this.postMessage({ type: 'activeTab', tab });
+  }
+
   private _getHtmlForWebview(webview: vscode.Webview): string {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Antigravity Voice Bridge</title>
+  <title>Antigravity Voice Companion</title>
   <style>
     :root {
       --bg-color: var(--vscode-editor-background, #1e1e1e);
@@ -122,26 +221,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       --text-color: var(--vscode-editor-foreground, #d4d4d4);
       --accent-color: #3b82f6;
       --accent-hover: #2563eb;
-      --speaking-glow: #06b6d4;
-      --listening-glow: #10b981;
-      --thinking-glow: #a855f7;
-      --danger-color: #ef4444;
       --border-color: var(--vscode-panel-border, #3c3c3c);
-      --user-bubble: #2d3748;
-      --model-bubble: #1a202c;
-      --tool-bubble: #1f2937;
+      --danger-color: #ef4444;
+      --success-color: #10b981;
+      --warning-color: #f59e0b;
+      --font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
     }
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       background-color: var(--bg-color);
       color: var(--text-color);
-      font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+      font-family: var(--font-family);
       font-size: var(--vscode-font-size, 13px);
       display: flex;
       flex-direction: column;
@@ -149,14 +241,147 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       overflow: hidden;
     }
 
-    .top-panel {
-      padding: 12px;
+    /* Tab Navigation */
+    .tab-nav {
+      display: flex;
       background: var(--card-bg);
       border-bottom: 1px solid var(--border-color);
+      overflow-x: auto;
+      scrollbar-width: none;
+      flex-shrink: 0;
+    }
+    .tab-nav::-webkit-scrollbar { display: none; }
+
+    .tab-btn {
+      flex: 1;
+      padding: 9px 8px;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-color);
+      opacity: 0.7;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      text-align: center;
+      transition: all 0.15s ease;
+    }
+    .tab-btn:hover { opacity: 1; background: rgba(255, 255, 255, 0.04); }
+    .tab-btn.active {
+      opacity: 1;
+      color: #60a5fa;
+      border-bottom-color: #3b82f6;
+      background: rgba(59, 130, 246, 0.08);
+    }
+
+    .tab-content {
+      display: none;
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .tab-content.active {
+      display: flex;
+    }
+
+    /* Generative UI Card */
+    .gen-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
       display: flex;
       flex-direction: column;
       gap: 10px;
-      flex-shrink: 0;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      padding-bottom: 6px;
+    }
+
+    .card-title {
+      font-weight: 700;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Progress bar */
+    .progress-bar-container {
+      width: 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+      overflow: hidden;
+      margin: 4px 0;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-completed { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+    .badge-progress { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    .badge-pending { background: rgba(156, 163, 175, 0.2); color: #9ca3af; }
+    .badge-blocked { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+
+    /* Interactive List Items */
+    .task-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .task-item:hover { background: rgba(255, 255, 255, 0.06); }
+    .task-checkbox {
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+    }
+    .task-text {
+      flex: 1;
+      font-size: 12px;
+      word-break: break-word;
+    }
+    .task-text.completed {
+      text-decoration: line-through;
+      opacity: 0.6;
+    }
+
+    /* Voice Tab Components */
+    .top-panel {
+      padding: 10px;
+      background: var(--card-bg);
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
     .status-row {
@@ -169,12 +394,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 10px;
+      padding: 3px 8px;
       border-radius: 9999px;
       font-weight: 600;
       font-size: 11px;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
       background: rgba(255, 255, 255, 0.08);
     }
 
@@ -185,51 +408,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       background: #9ca3af;
     }
 
-    /* State Dot Animations */
-    .state-idle .status-dot { background: #9ca3af; }
-    .state-connecting .status-dot { background: #f59e0b; animation: pulse 1s infinite; }
-    .state-listening .status-dot { background: #10b981; box-shadow: 0 0 8px #10b981; animation: pulse 1.2s infinite; }
-    .state-thinking .status-dot { background: #a855f7; box-shadow: 0 0 8px #a855f7; animation: ping 1s infinite; }
-    .state-speaking .status-dot { background: #06b6d4; box-shadow: 0 0 10px #06b6d4; animation: wave 0.8s infinite alternate; }
-    .state-interrupted .status-dot { background: #f59e0b; }
-    .state-error .status-dot { background: #ef4444; }
-
-    @keyframes pulse {
-      0% { opacity: 0.4; transform: scale(0.9); }
-      50% { opacity: 1; transform: scale(1.15); }
-      100% { opacity: 0.4; transform: scale(0.9); }
-    }
-
-    @keyframes ping {
-      0% { transform: scale(1); opacity: 1; }
-      75%, 100% { transform: scale(1.6); opacity: 0; }
-    }
+    .state-listening .status-dot { background: #10b981; box-shadow: 0 0 8px #10b981; }
+    .state-speaking .status-dot { background: #06b6d4; box-shadow: 0 0 8px #06b6d4; }
+    .state-thinking .status-dot { background: #a855f7; box-shadow: 0 0 8px #a855f7; }
 
     .visualizer-container {
       width: 100%;
-      height: 52px;
-      background: rgba(0, 0, 0, 0.25);
+      height: 44px;
+      background: rgba(0, 0, 0, 0.3);
       border-radius: 6px;
       overflow: hidden;
-      position: relative;
-      border: 1px solid rgba(255, 255, 255, 0.05);
     }
-
-    canvas#visualizer {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
+    canvas#visualizer { width: 100%; height: 100%; display: block; }
 
     .controls-row {
       display: flex;
-      align-items: center;
       gap: 6px;
     }
 
     button.btn {
       flex: 1;
-      padding: 7px 12px;
+      padding: 7px 10px;
       border-radius: 4px;
       border: none;
       cursor: pointer;
@@ -238,46 +437,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
-      transition: background 0.15s ease, transform 0.05s;
+      gap: 5px;
+      transition: all 0.15s;
     }
-
-    button.btn:active {
-      transform: scale(0.98);
-    }
-
-    .btn-primary {
-      background: var(--accent-color);
-      color: #fff;
-    }
+    .btn-primary { background: var(--accent-color); color: #fff; }
     .btn-primary:hover { background: var(--accent-hover); }
-
-    .btn-danger {
-      background: var(--danger-color);
-      color: #fff;
-    }
-    .btn-danger:hover { opacity: 0.9; }
-
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.1);
-      color: var(--text-color);
-      flex: 0 0 auto;
-      padding: 7px 10px;
-    }
+    .btn-danger { background: var(--danger-color); color: #fff; }
+    .btn-secondary { background: rgba(255, 255, 255, 0.1); color: var(--text-color); flex: 0 0 auto; }
     .btn-secondary:hover { background: rgba(255, 255, 255, 0.18); }
-    .btn-secondary.active {
-      background: rgba(239, 68, 68, 0.25);
-      color: #ef4444;
-      border: 1px solid #ef4444;
-    }
+    .btn-secondary.active { background: rgba(239, 68, 68, 0.25); color: #ef4444; border: 1px solid #ef4444; }
 
     .transcript-container {
       flex: 1;
       overflow-y: auto;
-      padding: 12px;
+      padding: 8px 0;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
     }
 
     .message-card {
@@ -285,79 +461,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       flex-direction: column;
       gap: 4px;
       max-width: 95%;
-      animation: fadeIn 0.2s ease-in-out;
     }
-
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .message-card.user {
-      align-self: flex-end;
-    }
-
-    .message-card.model {
-      align-self: flex-start;
-    }
-
-    .message-card.tool {
-      align-self: stretch;
-      max-width: 100%;
-    }
+    .message-card.user { align-self: flex-end; }
+    .message-card.model { align-self: flex-start; }
+    .message-card.tool { align-self: stretch; max-width: 100%; }
 
     .message-bubble {
-      padding: 8px 12px;
+      padding: 7px 11px;
       border-radius: 8px;
       line-height: 1.4;
-      word-break: break-word;
+      font-size: 12px;
     }
-
-    .message-card.user .message-bubble {
-      background: #1e3a8a;
-      color: #e0e7ff;
-      border-bottom-right-radius: 2px;
-    }
-
-    .message-card.model .message-bubble {
-      background: #1f2937;
-      color: #f3f4f6;
-      border-bottom-left-radius: 2px;
-      border: 1px solid rgba(255, 255, 255, 0.06);
-    }
+    .message-card.user .message-bubble { background: #1e3a8a; color: #e0e7ff; }
+    .message-card.model .message-bubble { background: #1f2937; color: #f3f4f6; border: 1px solid rgba(255, 255, 255, 0.06); }
 
     .tool-card {
       background: #111827;
       border: 1px solid rgba(59, 130, 246, 0.3);
       border-radius: 6px;
-      padding: 8px 10px;
-      font-family: var(--vscode-editor-font-family, monospace);
+      padding: 7px 9px;
+      font-family: monospace;
       font-size: 11px;
-    }
-
-    .tool-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      color: #60a5fa;
-      margin-bottom: 4px;
-      font-weight: bold;
-    }
-
-    .tool-args {
-      color: #9ca3af;
-      margin-bottom: 6px;
-      word-break: break-all;
-    }
-
-    .tool-output {
-      background: #000;
-      padding: 6px 8px;
-      border-radius: 4px;
-      color: #a7f3d0;
-      max-height: 120px;
-      overflow-y: auto;
-      white-space: pre-wrap;
     }
 
     .input-bar {
@@ -368,8 +492,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       gap: 6px;
       flex-shrink: 0;
     }
-
-    .input-bar input {
+    .input-bar input, .form-input {
       flex: 1;
       padding: 6px 10px;
       border-radius: 4px;
@@ -379,79 +502,230 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       outline: none;
       font-size: 12px;
     }
-
-    .input-bar input:focus {
-      border-color: var(--accent-color);
-    }
+    .input-bar input:focus, .form-input:focus { border-color: var(--accent-color); }
   </style>
 </head>
 <body class="state-idle">
-  <div class="top-panel">
-    <div class="status-row">
-      <div id="statusBadge" class="status-badge">
-        <div class="status-dot"></div>
-        <span id="statusText">Idle</span>
-      </div>
-      <span style="font-size: 11px; opacity: 0.6;">Gemini 2.5 Live</span>
-    </div>
-
-    <div class="visualizer-container">
-      <canvas id="visualizer"></canvas>
-    </div>
-
-    <div class="controls-row">
-      <button id="toggleBtn" class="btn btn-primary">
-        <svg id="micIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
-          <line x1="12" y1="19" x2="12" y2="23"></line>
-          <line x1="8" y1="23" x2="16" y2="23"></line>
-        </svg>
-        <span id="toggleText">Start Voice</span>
-      </button>
-
-      <button id="muteBtn" class="btn btn-secondary" title="Mute Microphone">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="1" y1="1" x2="23" y2="23"></line>
-          <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path>
-          <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path>
-        </svg>
-      </button>
-
-      <button id="interruptBtn" class="btn btn-secondary" title="Interrupt Voice (Barge-in)">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"></circle>
-          <rect x="9" y="9" width="6" height="6"></rect>
-        </svg>
-      </button>
-
-      <button id="clearBtn" class="btn btn-secondary" title="Clear Transcript">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="3 6 5 6 21 6"></polyline>
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-        </svg>
-      </button>
-    </div>
+  <!-- Top Tab Navigation -->
+  <div class="tab-nav">
+    <button class="tab-btn active" data-tab="voice">🎙️ Voice</button>
+    <button class="tab-btn" data-tab="goal">🎯 Goal</button>
+    <button class="tab-btn" data-tab="plan">📋 Plan</button>
+    <button class="tab-btn" data-tab="teamwork">👥 Teamwork</button>
+    <button class="tab-btn" data-tab="browser">🌐 Browser</button>
+    <button class="tab-btn" data-tab="boost">⚡ Boost</button>
   </div>
 
-  <div id="transcript" class="transcript-container">
-    <div class="message-card model">
-      <div class="message-bubble">
-        👋 Ready! Click <strong>Start Voice</strong> to begin speaking with Antigravity / Gemini Live.
+  <!-- TAB 1: Voice -->
+  <div id="tab-voice" class="tab-content active">
+    <div class="top-panel">
+      <div class="status-row">
+        <div id="statusBadge" class="status-badge">
+          <div class="status-dot"></div>
+          <span id="statusText">Idle</span>
+        </div>
+        <span style="font-size: 11px; opacity: 0.6;">Gemini 2.5 Live</span>
+      </div>
+
+      <div class="visualizer-container">
+        <canvas id="visualizer"></canvas>
+      </div>
+
+      <div class="controls-row">
+        <button id="toggleBtn" class="btn btn-primary">
+          <span id="toggleText">Start Voice</span>
+        </button>
+        <button id="muteBtn" class="btn btn-secondary" title="Mute Microphone">🔇</button>
+        <button id="interruptBtn" class="btn btn-secondary" title="Interrupt Assistant">⏹️</button>
+        <button id="clearBtn" class="btn btn-secondary" title="Clear Transcript">🗑️</button>
+      </div>
+    </div>
+
+    <div id="transcript" class="transcript-container">
+      <div class="message-card model">
+        <div class="message-bubble">
+          👋 Ready! Click <strong>Start Voice</strong> to begin speaking with Antigravity / Gemini Live. Use slash commands like <code>/goal</code>, <code>/plan</code>, <code>/teamwork-preview</code>, <code>/browser</code>, <code>/boost</code>.
+        </div>
       </div>
     </div>
   </div>
 
+  <!-- TAB 2: Goal (/goal) -->
+  <div id="tab-goal" class="tab-content">
+    <div class="gen-card">
+      <div class="card-header">
+        <div class="card-title">🎯 Goal & Progress Tracking</div>
+        <button id="refreshGoalBtn" class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px;">🔄 Refresh</button>
+      </div>
+      <div>
+        <div style="font-size: 11px; opacity: 0.7;">Active Milestone:</div>
+        <div id="goalMilestone" style="font-weight: 600; font-size: 13px; margin-top: 2px;">Loading...</div>
+      </div>
+      <div>
+        <div style="display: flex; justify-content: space-between; font-size: 11px;">
+          <span>Completion</span>
+          <span id="goalPercentText">0%</span>
+        </div>
+        <div class="progress-bar-container">
+          <div id="goalProgressBar" class="progress-bar-fill"></div>
+        </div>
+        <div id="goalMetricCounts" style="font-size: 10px; opacity: 0.6; margin-top: 3px;">0/0 tasks completed</div>
+      </div>
+      <div id="activeTaskBanner" style="background: rgba(59, 130, 246, 0.15); border-left: 3px solid #3b82f6; padding: 6px 8px; border-radius: 4px; font-size: 12px;">
+        <strong>Active Task:</strong> <span id="activeTaskText">None</span>
+      </div>
+    </div>
+
+    <div class="gen-card" style="flex: 1;">
+      <div class="card-header">
+        <div class="card-title">Checklist Items</div>
+        <span id="goalSourcePath" style="font-size: 10px; opacity: 0.5;">task.md</span>
+      </div>
+      <div id="taskListContainer" style="display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1;"></div>
+      <div style="display: flex; gap: 6px; margin-top: 8px;">
+        <input type="text" id="newTaskInput" class="form-input" placeholder="Add a new task..." />
+        <button id="addTaskBtn" class="btn btn-primary" style="flex: 0 0 auto; padding: 6px 12px;">+ Add</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: Plan (/plan) -->
+  <div id="tab-plan" class="tab-content">
+    <div class="gen-card">
+      <div class="card-header">
+        <div class="card-title">📋 Phased Implementation Plan</div>
+        <button id="refreshPlanBtn" class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px;">🔄 Refresh</button>
+      </div>
+      <div>
+        <div style="font-size: 11px; opacity: 0.7;">Plan Objective:</div>
+        <div id="planObjective" style="font-weight: 600; font-size: 13px; margin-top: 2px;">No active plan</div>
+      </div>
+      <div id="planGatingBanner" style="padding: 6px 8px; border-radius: 4px; font-size: 11px; background: rgba(245, 158, 11, 0.15); border-left: 3px solid #f59e0b;">
+        🔒 Execution Gated: Awaiting Step Approvals
+      </div>
+    </div>
+
+    <div class="gen-card">
+      <div class="card-title">Proposed Changes</div>
+      <div id="proposedChangesContainer" style="display: flex; flex-direction: column; gap: 6px;"></div>
+    </div>
+
+    <div class="gen-card" style="flex: 1;">
+      <div class="card-title">Approval Steps</div>
+      <div id="planStepsContainer" style="display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1;"></div>
+    </div>
+  </div>
+
+  <!-- TAB 4: Teamwork Preview (/teamwork-preview) -->
+  <div id="tab-teamwork" class="tab-content">
+    <div class="gen-card">
+      <div class="card-header">
+        <div class="card-title">👥 Teamwork Preview & Git Delta</div>
+        <button id="refreshTeamworkBtn" class="btn btn-secondary" style="padding: 3px 8px; font-size: 11px;">🔄 Refresh</button>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 12px;">
+        <span>Branch: <code id="gitBranch">main</code></span>
+        <span id="gitSyncStat" style="opacity: 0.8;">Ahead: 0 | Behind: 0</span>
+      </div>
+      <div style="display: flex; gap: 12px; font-size: 11px; margin-top: 4px;">
+        <span style="color: #10b981;">Lines Added: +<span id="gitInsertions">0</span></span>
+        <span style="color: #ef4444;">Lines Removed: -<span id="gitDeletions">0</span></span>
+      </div>
+    </div>
+
+    <div class="gen-card" style="flex: 1;">
+      <div class="card-header">
+        <div class="card-title">Working Tree Changes</div>
+      </div>
+      <div id="gitFilesContainer" style="display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1;"></div>
+      <button id="generateWalkthroughBtn" class="btn btn-primary" style="margin-top: 8px;">
+        📝 Generate Walkthrough.md
+      </button>
+    </div>
+  </div>
+
+  <!-- TAB 5: Browser (/browser) -->
+  <div id="tab-browser" class="tab-content">
+    <div class="gen-card">
+      <div class="card-header">
+        <div class="card-title">🌐 Dev Server Discovery</div>
+        <button id="scanDevServersBtn" class="btn btn-primary" style="padding: 4px 10px; font-size: 11px;">🔍 Scan Localhost</button>
+      </div>
+      <div style="font-size: 11px; opacity: 0.7;">
+        Sniffs terminal stdout and probes loopback ports (3000, 5173, 8080, etc.).
+      </div>
+    </div>
+
+    <div class="gen-card" style="flex: 1;">
+      <div class="card-title">Detected Servers</div>
+      <div id="devServersList" style="display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1;">
+        <div style="font-size: 12px; opacity: 0.6; text-align: center; padding: 20px 0;">No active dev servers detected yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 6: Boost (/boost) -->
+  <div id="tab-boost" class="tab-content">
+    <div class="gen-card">
+      <div class="card-header">
+        <div class="card-title">⚡ Turbocharged Deep-Reasoning</div>
+        <span class="badge badge-progress">Antigravity Pro</span>
+      </div>
+      <div style="font-size: 11px; opacity: 0.8;">
+        Delegates heavy reasoning to Antigravity native <code>agentapi.bat --model=pro</code> or Claude Code CLI while keeping Gemini Live voice responsive.
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+        <label style="font-size: 11px;">Model Tier:</label>
+        <select id="boostModelSelect" class="form-input">
+          <option value="pro">Antigravity Pro (agentapi --model=pro)</option>
+          <option value="flash">Antigravity Flash (agentapi --model=flash)</option>
+        </select>
+        <textarea id="boostPromptInput" class="form-input" rows="3" placeholder="Enter deep architecture or codebase reasoning prompt..."></textarea>
+        <button id="runBoostBtn" class="btn btn-primary">🚀 Run Boost Reasoning</button>
+      </div>
+    </div>
+
+    <div class="gen-card" style="flex: 1;">
+      <div class="card-title">Reasoning Output</div>
+      <div id="boostStatus" style="font-size: 11px; opacity: 0.7;">Idle</div>
+      <pre id="boostOutput" style="background: rgba(0,0,0,0.3); border-radius: 4px; padding: 8px; font-size: 11px; overflow-y: auto; flex: 1; white-space: pre-wrap; font-family: monospace;">Awaiting query...</pre>
+    </div>
+  </div>
+
+  <!-- Input Bar (Active across all tabs) -->
   <div class="input-bar">
-    <input type="text" id="textInput" placeholder="Type prompt or command..." />
-    <button id="sendBtn" class="btn btn-secondary" style="padding: 6px 10px;">Send</button>
+    <input type="text" id="textInput" placeholder="Type prompt or /command (/goal, /plan, /browser)..." />
+    <button id="sendBtn" class="btn btn-secondary" style="padding: 6px 12px;">Send</button>
   </div>
 
   <script>
     const vscode = acquireVsCodeApi();
 
-    // Elements
-    const statusBadge = document.getElementById('statusBadge');
+    // Tab Switching
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    function setActiveTab(tabName) {
+      tabBtns.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+      });
+      tabContents.forEach(content => {
+        content.classList.toggle('active', content.id === 'tab-' + tabName);
+      });
+    }
+
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        setActiveTab(tab);
+        if (tab === 'goal') vscode.postMessage({ type: 'getGoal' });
+        if (tab === 'plan') vscode.postMessage({ type: 'getPlan' });
+        if (tab === 'teamwork') vscode.postMessage({ type: 'getTeamworkPreview' });
+        if (tab === 'browser') vscode.postMessage({ type: 'scanDevServers' });
+      });
+    });
+
+    // Voice UI elements
     const statusText = document.getElementById('statusText');
     const toggleBtn = document.getElementById('toggleBtn');
     const toggleText = document.getElementById('toggleText');
@@ -474,12 +748,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     let activeSources = [];
     let analyser = null;
     let micRmsLevel = 0;
-
-    // Webview Microphone Streamer (fallback / direct capture with AEC)
-    let mediaStream = null;
-    let micAudioCtx = null;
-    let micSource = null;
-    let micProcessor = null;
 
     function initAudioContext() {
       if (!audioCtx) {
@@ -523,7 +791,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         bytes[i] = binaryStr.charCodeAt(i);
       }
 
-      // Convert 16-bit PCM (little-endian) to Float32Array
       const int16Array = new Int16Array(bytes.buffer, 0, evenLen / 2);
       const float32Array = new Float32Array(int16Array.length);
       for (let i = 0; i < int16Array.length; i++) {
@@ -550,103 +817,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       };
     }
 
-    async function startWebviewMic() {
-      try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          console.warn('getUserMedia not supported in this webview environment');
-          return;
-        }
-
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            sampleRate: 16000,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }
-        });
-
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        micAudioCtx = new AudioContextClass({ sampleRate: 16000 });
-        micSource = micAudioCtx.createMediaStreamSource(mediaStream);
-        
-        const workletCode = \`
-          class MicProcessor extends AudioWorkletProcessor {
-            process(inputs, outputs, parameters) {
-              const input = inputs[0];
-              if (input.length > 0) {
-                const channelData = input[0];
-                let rms = 0;
-                for (let i = 0; i < channelData.length; i++) {
-                  rms += channelData[i] * channelData[i];
-                }
-                rms = Math.sqrt(rms / channelData.length);
-                
-                const pcm16 = new Int16Array(channelData.length);
-                for (let i = 0; i < channelData.length; i++) {
-                  let s = Math.max(-1, Math.min(1, channelData[i]));
-                  pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                }
-                
-                this.port.postMessage({ pcm: pcm16, rms });
-              }
-              return true;
-            }
-          }
-          registerProcessor('mic-processor', MicProcessor);
-        \`;
-        
-        const blob = new Blob([workletCode], { type: 'application/javascript' });
-        await micAudioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
-        
-        micProcessor = new AudioWorkletNode(micAudioCtx, 'mic-processor');
-        micProcessor.port.onmessage = (e) => {
-          if (isMuted || currentState === 'idle') return;
-          const { pcm, rms } = e.data;
-          micRmsLevel = rms;
-          
-          const buffer = new Uint8Array(pcm.buffer);
-          let binary = '';
-          for (let i = 0; i < buffer.byteLength; i++) {
-            binary += String.fromCharCode(buffer[i]);
-          }
-          const b64 = window.btoa(binary);
-          
-          vscode.postMessage({
-            type: 'micPcmChunk',
-            data: b64,
-            rms: Number(rms.toFixed(3))
-          });
-        };
-
-        micSource.connect(micProcessor);
-        micProcessor.connect(micAudioCtx.destination);
-      } catch (err) {
-        console.warn('Webview mic capture initialization failed:', err);
-      }
-    }
-
-    function stopWebviewMic() {
-      if (micProcessor) {
-        micProcessor.disconnect();
-        micProcessor = null;
-      }
-      if (micSource) {
-        micSource.disconnect();
-        micSource = null;
-      }
-      if (micAudioCtx) {
-        micAudioCtx.close();
-        micAudioCtx = null;
-      }
-      if (mediaStream) {
-        mediaStream.getTracks().forEach(t => t.stop());
-        mediaStream = null;
-      }
-    }
-
-    // Visualizer Canvas Animation
+    // Visualizer Canvas
     function resizeCanvas() {
       canvas.width = canvas.clientWidth * window.devicePixelRatio;
       canvas.height = canvas.clientHeight * window.devicePixelRatio;
@@ -664,7 +835,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (analyser && activeSources.length > 0) {
         analyser.getByteFrequencyData(dataArray);
       } else if (micRmsLevel > 0) {
-        // Generate simulated dynamic frequency bars based on mic RMS
         for (let i = 0; i < dataArray.length; i++) {
           const factor = Math.sin((i / dataArray.length) * Math.PI);
           dataArray[i] = Math.min(255, Math.floor(micRmsLevel * 255 * factor * (0.8 + Math.random() * 0.4)));
@@ -676,15 +846,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       for (let i = 0; i < dataArray.length; i++) {
         const barHeight = (dataArray[i] / 255.0) * (height * 0.85);
-
         let strokeStyle = '#3b82f6';
-        if (currentState === 'speaking') {
-          strokeStyle = '#06b6d4';
-        } else if (currentState === 'listening') {
-          strokeStyle = '#10b981';
-        } else if (currentState === 'thinking') {
-          strokeStyle = '#a855f7';
-        }
+        if (currentState === 'speaking') strokeStyle = '#06b6d4';
+        else if (currentState === 'listening') strokeStyle = '#10b981';
+        else if (currentState === 'thinking') strokeStyle = '#a855f7';
 
         ctx.fillStyle = strokeStyle;
         const y = height / 2 - barHeight / 2;
@@ -694,25 +859,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     renderVisualizer();
 
-    // UI Updates
-    function updateStateUI(state, details) {
-      currentState = state;
-      if (state !== 'speaking' && state !== 'interrupted') {
-        isInterrupted = false;
-      }
-      document.body.className = 'state-' + state;
-      statusText.textContent = details || (state.charAt(0).toUpperCase() + state.slice(1));
-
-      if (state === 'idle' || state === 'error') {
-        toggleBtn.className = 'btn btn-primary';
-        toggleText.textContent = 'Start Voice';
-      } else {
-        toggleBtn.className = 'btn btn-danger';
-        toggleText.textContent = 'Stop Voice';
-      }
-    }
-
-    // Button Listeners
+    // Voice control clicks
     toggleBtn.addEventListener('click', () => {
       initAudioContext();
       if (currentState === 'idle' || currentState === 'error') {
@@ -756,12 +903,65 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (e.key === 'Enter') sendText();
     });
 
-    // Handle messages from Extension
+    // Goal Buttons
+    document.getElementById('refreshGoalBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'getGoal' });
+    });
+
+    document.getElementById('addTaskBtn').addEventListener('click', () => {
+      const input = document.getElementById('newTaskInput');
+      const text = input.value.trim();
+      if (text) {
+        input.value = '';
+        vscode.postMessage({ type: 'addTask', text });
+      }
+    });
+
+    // Plan Buttons
+    document.getElementById('refreshPlanBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'getPlan' });
+    });
+
+    // Teamwork Buttons
+    document.getElementById('refreshTeamworkBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'getTeamworkPreview' });
+    });
+
+    document.getElementById('generateWalkthroughBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'sendTextMessage', text: '/teamwork-preview walkthrough' });
+    });
+
+    // Browser Buttons
+    document.getElementById('scanDevServersBtn').addEventListener('click', () => {
+      vscode.postMessage({ type: 'scanDevServers' });
+    });
+
+    // Boost Buttons
+    document.getElementById('runBoostBtn').addEventListener('click', () => {
+      const prompt = document.getElementById('boostPromptInput').value.trim();
+      const model = document.getElementById('boostModelSelect').value;
+      if (prompt) {
+        document.getElementById('boostStatus').textContent = 'Running Boost reasoning...';
+        vscode.postMessage({ type: 'runBoost', prompt, model });
+      }
+    });
+
+    // Message Handler from Extension Host
     window.addEventListener('message', (event) => {
       const msg = event.data;
       switch (msg.type) {
         case 'stateChange':
-          updateStateUI(msg.state, msg.details);
+          currentState = msg.state;
+          if (msg.state !== 'speaking' && msg.state !== 'interrupted') isInterrupted = false;
+          document.body.className = 'state-' + msg.state;
+          statusText.textContent = msg.details || (msg.state.charAt(0).toUpperCase() + msg.state.slice(1));
+          if (msg.state === 'idle' || msg.state === 'error') {
+            toggleBtn.className = 'btn btn-primary';
+            toggleText.textContent = 'Start Voice';
+          } else {
+            toggleBtn.className = 'btn btn-danger';
+            toggleText.textContent = 'Stop Voice';
+          }
           break;
 
         case 'audioChunk':
@@ -772,22 +972,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           micRmsLevel = msg.rms;
           break;
 
-        case 'startWebviewMic':
-          startWebviewMic();
-          break;
-
-        case 'stopWebviewMic':
-          stopWebviewMic();
-          break;
-
         case 'interrupted':
           stopAllAudio();
-          updateStateUI('interrupted', 'Barge-in');
-          setTimeout(() => {
-            if (currentState === 'interrupted') {
-              updateStateUI('listening', 'Listening');
-            }
-          }, 800);
           break;
 
         case 'transcript':
@@ -797,8 +983,66 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         case 'transcriptUpdate':
           updateTranscriptEntry(msg.id, msg.partialText, msg.toolResult, msg.status);
           break;
+
+        case 'goalUpdate':
+          renderGoalUI(msg.data);
+          break;
+
+        case 'planUpdate':
+          renderPlanUI(msg.data);
+          break;
+
+        case 'teamworkUpdate':
+          renderTeamworkUI(msg.delta, msg.walkthrough);
+          break;
+
+        case 'devServersUpdate':
+          renderDevServersUI(msg.servers);
+          break;
+
+        case 'boostProgress':
+          document.getElementById('boostStatus').textContent = msg.message;
+          break;
+
+        case 'boostComplete':
+          document.getElementById('boostStatus').textContent = 'Completed';
+          document.getElementById('boostOutput').textContent = msg.result;
+          break;
+
+        case 'userCaption':
+          renderLiveCaption('You: ' + msg.text, 'user');
+          break;
+
+        case 'modelCaption':
+          renderLiveCaption('Antigravity: ' + msg.text, 'model');
+          break;
+
+        case 'activeTab':
+          setActiveTab(msg.tab);
+          break;
       }
     });
+
+    // Request initial data immediately on script load
+    vscode.postMessage({ type: 'getGoal' });
+    vscode.postMessage({ type: 'getPlan' });
+    vscode.postMessage({ type: 'getTeamworkPreview' });
+    vscode.postMessage({ type: 'scanDevServers' });
+
+    let liveCaptionEl = null;
+    function renderLiveCaption(text, role) {
+      if (!liveCaptionEl) {
+        liveCaptionEl = document.createElement('div');
+        liveCaptionEl.style.cssText = 'padding:6px 10px;font-size:11px;background:rgba(59,130,246,0.15);border-left:3px solid #3b82f6;border-radius:4px;margin-bottom:6px;font-style:italic;';
+        transcript.parentNode.insertBefore(liveCaptionEl, transcript);
+      }
+      liveCaptionEl.textContent = text;
+      liveCaptionEl.style.display = 'block';
+      clearTimeout(liveCaptionEl._timer);
+      liveCaptionEl._timer = setTimeout(() => {
+        if (liveCaptionEl) liveCaptionEl.style.display = 'none';
+      }, 4000);
+    }
 
     function appendTranscript(entry) {
       const div = document.createElement('div');
@@ -808,12 +1052,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (entry.role === 'tool' && entry.toolCall) {
         div.innerHTML = \`
           <div class="tool-card">
-            <div class="tool-header">
+            <div style="display:flex;justify-content:space-between;color:#60a5fa;margin-bottom:4px;font-weight:bold;">
               <span>🔧 \${entry.toolCall.name}</span>
-              <span id="tool-status-\${entry.id}" style="font-weight: normal; opacity: 0.8;">\${entry.toolCall.status}</span>
+              <span id="tool-status-\${entry.id}">\${entry.toolCall.status}</span>
             </div>
-            <div class="tool-args">\${JSON.stringify(entry.toolCall.args)}</div>
-            <div id="tool-out-\${entry.id}" class="tool-output" style="display: none;"></div>
+            <div style="color:#9ca3af;margin-bottom:4px;">\${JSON.stringify(entry.toolCall.args)}</div>
+            <div id="tool-out-\${entry.id}" style="background:#000;padding:6px;border-radius:4px;color:#a7f3d0;display:none;white-space:pre-wrap;"></div>
           </div>
         \`;
       } else {
@@ -834,9 +1078,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       if (partialText !== undefined) {
         const bubble = el.querySelector('.message-bubble');
-        if (bubble) {
-          bubble.textContent += partialText;
-        }
+        if (bubble) bubble.textContent += partialText;
       }
 
       if (toolResult !== undefined) {
@@ -849,16 +1091,202 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       if (status) {
         const st = document.getElementById('tool-status-' + id);
-        if (st) {
-          st.textContent = status;
-        }
+        if (st) st.textContent = status;
       }
 
       transcript.scrollTop = transcript.scrollHeight;
     }
 
+    // Render Pillar UIs
+    function renderGoalUI(goal) {
+      if (!goal) return;
+      document.getElementById('goalMilestone').textContent = goal.milestone || 'Default Milestone';
+      document.getElementById('goalPercentText').textContent = goal.percentDone + '%';
+      document.getElementById('goalProgressBar').style.width = goal.percentDone + '%';
+      document.getElementById('goalMetricCounts').textContent = \`\${goal.completedTasks}/\${goal.totalTasks} completed | \${goal.inProgressTasks} in progress\`;
+      document.getElementById('goalSourcePath').textContent = goal.sourcePath ? goal.sourcePath.split(/[\\\\/]/).pop() : 'task.md';
+
+      if (goal.activeTask) {
+        document.getElementById('activeTaskText').textContent = goal.activeTask.text;
+      } else {
+        document.getElementById('activeTaskText').textContent = 'All tasks completed!';
+      }
+
+      const listContainer = document.getElementById('taskListContainer');
+      listContainer.innerHTML = '';
+
+      goal.tasks.forEach(task => {
+        const item = document.createElement('div');
+        item.className = 'task-item';
+        item.style.marginLeft = (task.indent * 12) + 'px';
+
+        const isChecked = task.status === 'completed';
+        const badgeClass = 'badge-' + (task.status === 'in_progress' ? 'progress' : task.status);
+
+        item.innerHTML = \`
+          <input type="checkbox" class="task-checkbox" \${isChecked ? 'checked' : ''} />
+          <span class="task-text \${isChecked ? 'completed' : ''}">\${escapeHtml(task.text)}</span>
+          <span class="badge \${badgeClass}">\${task.status}</span>
+        \`;
+
+        const checkbox = item.querySelector('.task-checkbox');
+        checkbox.addEventListener('change', () => {
+          const nextStatus = checkbox.checked ? 'completed' : 'pending';
+          vscode.postMessage({
+            type: 'updateTaskStatus',
+            taskIdOrText: task.id,
+            status: nextStatus
+          });
+        });
+
+        listContainer.appendChild(item);
+      });
+    }
+
+    function renderPlanUI(plan) {
+      if (!plan) {
+        document.getElementById('planObjective').textContent = 'No active implementation plan found.';
+        return;
+      }
+      document.getElementById('planObjective').textContent = plan.objective;
+      const gating = document.getElementById('planGatingBanner');
+      if (plan.allApproved) {
+        gating.style.background = 'rgba(16, 185, 129, 0.15)';
+        gating.style.borderLeftColor = '#10b981';
+        gating.textContent = '✅ All Steps Approved: Tool Execution Permitted';
+      } else {
+        gating.style.background = 'rgba(245, 158, 11, 0.15)';
+        gating.style.borderLeftColor = '#f59e0b';
+        gating.textContent = '🔒 Execution Gated: Awaiting Step Approvals';
+      }
+
+      const changesContainer = document.getElementById('proposedChangesContainer');
+      changesContainer.innerHTML = '';
+      plan.proposedChanges.forEach(ch => {
+        const div = document.createElement('div');
+        div.style.background = 'rgba(0,0,0,0.2)';
+        div.style.padding = '6px 8px';
+        div.style.borderRadius = '4px';
+        div.style.fontSize = '11px';
+        div.innerHTML = \`
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px;">
+            <span class="badge \${ch.action === 'CREATE' ? 'badge-completed' : 'badge-progress'}">\${ch.action}</span>
+            <code style="color:#60a5fa;">\${escapeHtml(ch.path)}</code>
+          </div>
+          <div style="opacity:0.8;">\${escapeHtml(ch.rationale)}</div>
+        \`;
+        changesContainer.appendChild(div);
+      });
+
+      const stepsContainer = document.getElementById('planStepsContainer');
+      stepsContainer.innerHTML = '';
+      plan.steps.forEach(step => {
+        const div = document.createElement('div');
+        div.className = 'task-item';
+        div.innerHTML = \`
+          <input type="checkbox" class="task-checkbox" \${step.approved ? 'checked disabled' : ''} />
+          <span class="task-text \${step.approved ? 'completed' : ''}">\${step.id}. \${escapeHtml(step.text)}</span>
+          <span class="badge \${step.approved ? 'badge-completed' : 'badge-pending'}">\${step.approved ? 'Approved' : 'Pending'}</span>
+        \`;
+        const cb = div.querySelector('.task-checkbox');
+        cb.addEventListener('change', () => {
+          if (cb.checked) {
+            vscode.postMessage({ type: 'approvePlanStep', stepId: step.id });
+          }
+        });
+        stepsContainer.appendChild(div);
+      });
+    }
+
+    function renderTeamworkUI(delta, walkthrough) {
+      if (!delta) return;
+      document.getElementById('gitBranch').textContent = delta.branch;
+      document.getElementById('gitSyncStat').textContent = \`Ahead: \${delta.ahead} | Behind: \${delta.behind}\`;
+      document.getElementById('gitInsertions').textContent = delta.insertions;
+      document.getElementById('gitDeletions').textContent = delta.deletions;
+
+      const container = document.getElementById('gitFilesContainer');
+      container.innerHTML = '';
+
+      const allFiles = [
+        ...delta.modifiedFiles.map(f => ({ path: f, type: 'Modified' })),
+        ...delta.stagedFiles.map(f => ({ path: f, type: 'Staged' })),
+        ...delta.untrackedFiles.map(f => ({ path: f, type: 'Untracked' }))
+      ];
+
+      if (allFiles.length === 0) {
+        container.innerHTML = '<div style="font-size:12px;opacity:0.6;padding:12px 0;text-align:center;">Working tree clean. No uncommitted changes.</div>';
+        return;
+      }
+
+      allFiles.forEach(file => {
+        const item = document.createElement('div');
+        item.style.display = 'flex';
+        item.style.justifyContent = 'space-between';
+        item.style.alignItems = 'center';
+        item.style.padding = '5px 8px';
+        item.style.background = 'rgba(0,0,0,0.2)';
+        item.style.borderRadius = '4px';
+        item.style.fontSize = '11px';
+
+        item.innerHTML = \`
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px;">
+            <span class="badge badge-pending" style="margin-right:6px;">\${file.type}</span>
+            <code>\${escapeHtml(file.path)}</code>
+          </div>
+          <button class="btn btn-secondary diff-btn" style="padding:2px 6px;font-size:10px;">Diff</button>
+        \`;
+
+        item.querySelector('.diff-btn').addEventListener('click', () => {
+          vscode.postMessage({ type: 'openDiff', filePath: file.path });
+        });
+
+        container.appendChild(item);
+      });
+    }
+
+    function renderDevServersUI(servers) {
+      const container = document.getElementById('devServersList');
+      container.innerHTML = '';
+      if (!servers || servers.length === 0) {
+        container.innerHTML = '<div style="font-size: 12px; opacity: 0.6; text-align: center; padding: 20px 0;">No active dev servers detected on localhost.</div>';
+        return;
+      }
+
+      servers.forEach(srv => {
+        const card = document.createElement('div');
+        card.style.background = 'rgba(0,0,0,0.25)';
+        card.style.border = '1px solid rgba(16,185,129,0.3)';
+        card.style.borderRadius = '6px';
+        card.style.padding = '8px 10px';
+        card.style.display = 'flex';
+        card.style.justifyContent = 'space-between';
+        card.style.alignItems = 'center';
+
+        card.innerHTML = \`
+          <div>
+            <div style="font-weight:600;font-size:12px;color:#34d399;">\${escapeHtml(srv.title || 'Dev Server')}</div>
+            <div style="font-size:11px;opacity:0.8;font-family:monospace;">\${escapeHtml(srv.url)}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn btn-secondary open-srv-btn" style="padding:2px 8px;font-size:10px;">Open ↗</button>
+            <span class="badge badge-completed">Running</span>
+          </div>
+        \`;
+
+        const openBtn = card.querySelector('.open-srv-btn');
+        if (openBtn) {
+          openBtn.addEventListener('click', () => {
+            vscode.postMessage({ type: 'openExternal', url: srv.url });
+          });
+        }
+
+        container.appendChild(card);
+      });
+    }
+
     function escapeHtml(str) {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
   </script>
 </body>
